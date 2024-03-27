@@ -1,6 +1,5 @@
 import os
 import math
-import csv
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -9,234 +8,250 @@ from selenium.webdriver.support import expected_conditions as EC
 import pandas as pd
 import time
 
-
-#Constants turned into Variables
+# Constants turned into Variables
 network_node_folder = 'C:\\Users\\Pc\\Desktop\\Python Codes\\my_code\\AI2PeatFolder\\'
 network_node_filename = 'AI2Peat_List.csv'
 network_edge_filename = 'AI2Peat_Relationship.csv'
 
-citation_tag = {'por' : "Citado por", 'eng' : 'Cited by'}
+citation_tag = {'por': "Citado por", 'eng': 'Cited by'} #used for searching in google scholar in Portuguese and English
 scraping_language = 'por'
 FirstSearch = "Playing atari with deep reinforcement learning"
 Search = FirstSearch
 SearchBarName = 'q'
 TitleXPath = '//div[@class="gs_ri"]/h3/a'
+AuthorXPath = '//div[@class="gs_ri"]/div/a'
 NextButtonXPath = '//button[@class="gs_btnPR gs_in_ib gs_btn_lrge gs_btn_half gs_btn_lsu"]'
 PaperNumber = 'Paper_Number'
 PaperName = 'Paper_Name'
 SearchSite = 'https://scholar.google.com/'
 DriverPath = r"C:\Users\Pc\Desktop\Python Codes"
 
-
-
-#This Part will look if there is already a CSV file named AI2Peat_List.csv created, if not it will create and go for the
-#first search, otherwise it will search for the names contained in the CSV file
-
+#Function for creating the CSV files
 def init_files():
-    with open(network_node_filename, 'w') as File:
-        File.write('Paper_Number;Paper_ID;Paper_Name;Paper_Link' + '\n')
-    with open(network_edge_filename, 'w') as File:
-        File.write('Paper_Number_Cited;Paper_Number_Quoter' + '\n')
 
-# In this part, the program will acess the Google Scholar site.
+    node_columns = ['Paper_Number', 'Paper_ID', 'Paper_Name', 'Paper_Link', 'Main_Author', 'Scrapped']
+    node_df = pd.DataFrame(columns=node_columns)
+    # node_df.set_index('Paper_Number', inplace=True)
+
+    edge_columns = ['Paper_Number_Cited', 'Paper_Number_Quoter']
+    edge_df = pd.DataFrame(columns=edge_columns)
+
+    node_df.to_csv(network_node_filename, sep=';', index=False)
+    edge_df.to_csv(network_edge_filename, index=False, sep=';')
+
+
+#Function for opening the browse
 def driver_init():
     driver = webdriver.Chrome()
     driver.get(SearchSite)
     driver.implicitly_wait(0.5)
     return driver
-#Here it will acess the Search Bar and search for the first paper
 
+
+
+#Function for strating the search
 def search_init(driver):
-    #global driver
     SearchBar = driver.find_element(By.NAME, SearchBarName)
     SearchBar.send_keys(Search)
-    #time.sleep(5)
-
     SearchBar.send_keys(Keys.ENTER)
 
-# Here it will find the Citations link. It extracts the number of papers from the link, then divides by 10, so we can now how many pages the
-#program will need to through to get all the pages. After that it clicks on the link.
-def scrapping():
 
-    global Index
 
+
+#Function for searching the Citation button. It will find the Citations link. It extracts the number of papers from the link, then divides by 10, so we can now how many pages the
+#program will need to through to get all the pages. After that it clicks on the lik.
+def citationbuttom(driver):
     CitationButtom = driver.find_element(By.PARTIAL_LINK_TEXT, citation_tag[scraping_language])
     PagesList = CitationButtom.text
     PagesSplit = PagesList.split()
     NumberPages = math.ceil(int(PagesSplit[-1]) / 10)
     CitationButtom.click()
 
-#-----------------------------------------------------------------------
+    return NumberPages
 
-    #time.sleep(5)
+#Function for writing AI2Peat_List
+def add_node(filename, paper_id, paper_title, paper_href, first_author, paper_scraped_already='No'):
+    # 1. load the dataframe
+    node_df = pd.read_csv(filename, sep=';')
 
-#Here it will start the scrapping and write the data into both CSV files created.
+    # 2. does the dataframe already have the paper_title?
+    if len(node_df[(node_df['Paper_Name'] == paper_title) & (node_df['Main_Author'] == first_author)]) > 0 :
+    #if paper_title in node_df['Paper_Name']:
+        # the paper is already present: don't add it anymore, return the paper Paper_Number
+        csv_paper_number = list(node_df.loc[(node_df['Paper_Name'] == paper_title) & (node_df['Main_Author'] == first_author), 'Paper_Number'])[0]
+        print(f'paper {paper_title} by author {first_author} already exists, csv_paper_number={csv_paper_number}')
+        return csv_paper_number # this return statement fetches the (assumed to be) correct value of paper_number
+
+    # the paper does not exist => add it to the dataframe, save it, and return its index (i.e. the last row index)
+
+    added_paper_number = len(node_df)
+
+    new_row = pd.DataFrame([[added_paper_number, paper_id, paper_title, paper_href, first_author, paper_scraped_already]],
+                           columns=node_df.columns)
+    node_df = pd.concat([node_df, new_row], ignore_index=True)
+
+    node_df.to_csv(network_node_folder + network_node_filename, sep=';', index=False)
+    # return the index of the paper just added
+    return added_paper_number
+
+#Function for writing AI2Peat_Rlationship
+def add_edge(original_index, index):
+    edge_df = pd.read_csv(network_node_folder + network_edge_filename, sep=';')
+    new_row2 = pd.DataFrame([[original_index, index]], columns=edge_df.columns)
+    edge_df = pd.concat([edge_df, new_row2], ignore_index=True)
+    edge_df.to_csv(network_node_folder + network_edge_filename, sep=';', index=False)
+
+# Writing into the CSV function
+def writtingcsv(driver, OriginalIndex, Index):
+
+    Titles = driver.find_elements(By.XPATH, TitleXPath)
+    Authors = driver.find_elements(By.XPATH, AuthorXPath)
+
+
+    for i in range(len(Titles)):
+
+        Index = add_node(network_node_folder + network_node_filename,
+                         Titles[i].get_attribute('id'),
+                         Titles[i].text, Titles[i].get_attribute('href'), Authors[i].text)
+
+
+        add_edge(OriginalIndex, Index)
+
+
+
+def scrapping(driver):
+    global Index
+
+    NumberPages = citationbuttom(driver)
+
+    # -----------------------------------------------------------------------
+
+    # time.sleep(5)
+
+    # Here it will start the scrapping and write the data into both CSV files created.
+    df = pd.read_csv(network_node_folder + network_node_filename, sep=';')
+    if len(df) == 1:
+        OriginalIndex = Index
+    else:
+        random_row = papers_df.sample(n=1).iloc[0]
+        OriginalIndex = random_row['Paper_Number']
+        print('here')
+
+
+
     for PageNext in range(NumberPages):
-        Titles = driver.find_elements(By.XPATH, TitleXPath)
+        writtingcsv(driver, OriginalIndex, Index)
 
-        with open(network_node_filename, 'a') as ListFile, open(network_edge_filename, 'a') as RelationshipFile:
-            for i in range(len(Titles)):
-                Index += 1
-                ListFile.write(str(Index) + ';' + Titles[i].get_attribute('id') + ';' + Titles[i].text + ';' + Titles[
-                    i].get_attribute('href') + '\n')
-
-
-                RelationshipFile.write(
-                    str(OriginalIndex) + ';' + str(Index) + '\n')
-# If there isn't anymore pages to go through, this try/catch clause will finish the loop. It is needed, because even if the paper
-# has thousands of citations, the google scholar has a limit of 100 pages.
+        # If there isn't anymore pages to go through, this try/catch clause will finish the loop. It is needed, because even if the paper
+        # has thousands of citations, the google scholar has a limit of 100 pages.
         try:
-                NextPage = WebDriverWait(driver, 30).until(
-                    EC.element_to_be_clickable(
-                        (By.XPATH, NextButtonXPath ))
-                )
-                NextPage.click()
+            NextPage = WebDriverWait(driver, 30).until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, NextButtonXPath))
+            )
+            NextPage.click()
         except Exception as e:
             print("Failed to click the 'Next' button. Exiting loop.")
             break  # Exit the loop if clicking fails
 
 
+def scrapping2(driver):
+    global Search
 
-def scrapping2():
 
-    DontSearchAgainList = [FirstSearch]
+    lastRow = (papers_df['Paper_Number'].iat[-1])
 
-    with open(network_node_filename, 'r') as csv_file:
+    NumberLoops = int(lastRow)
 
-        csv_reader = csv.DictReader(csv_file, delimiter=';')
-        # Initialize a variable to store the last row
-        lastRow = None
 
-        # Iterate through the rows and store the last row
-        for row in csv_reader:
-            lastRow = row
+    for i2 in range(NumberLoops):
+        random_row = papers_df.sample(n=1).iloc[0]
+        Search = random_row['Paper_Name']
 
-        # Access the value in the first column of the last row
-        if lastRow:
-            NumberLoops = int(lastRow[PaperNumber])
-            Index = NumberLoops
 
-        csv_file.seek(0)
+        if papers_df.loc[papers_df['Paper_Name'] == Search, 'Scrapped'].values[0] == 'Yes':
 
-        for i2 in range(NumberLoops):
+            pass
+        # ----------------------------------------------------------
+        # Here is where the code will open the Chrome browser again and it will get the name of the paper from the CSV and search for it
+        else:
 
-            for row in csv_reader:
-                global Search
+            # ===============================================
+            # this below is code that takes in input a paper name and scrapes it by extracting the citations
 
-                random_row = df.sample(n=1).iloc[0]
-                Search = random_row['Paper_Name']
+            papers_df.loc[papers_df['Paper_Name'] == Search, "Scrapped"] = "Yes"
 
-                if Search in DontSearchAgainList or Search == (PaperName):
-                    pass
-                # ----------------------------------------------------------
-                # Here is where the code will open the Chrome browser again and it will get the name of the paper from the CSV and search for it
-                else:
-                    DontSearchAgainList.append(Search)
 
-#===============================================
-# this below is code that takes in input a paper name and scrapes it by extracting the citations
 
-                    #driver_init()
-                    driver = driver_init()
+            search_init(driver)
 
-                    search_init(driver)
+            time.sleep(30)
+            OriginalIndex = random_row['Paper_Number']
 
-                    time.sleep(30)
 
-                    OriginalIndex = random_row['Paper_Number']
-                    # ---------------------------------------------------
-                    # Here it will find the Citations link. It extracts the number of papers from the link, then divides by 10, so we can now how many pages the
-                    # program will need to through to get all the pages. After that it clicks on the link. If the paper isn't cited by any other, it will close the window and the loop, and continue
-                    # searching for toher papers
+        # Here it will start the scrapping and write the data into both CSV files created.
+        scrapping(driver)
 
-                    try:
-                        CitationButtom = driver.find_element(By.PARTIAL_LINK_TEXT, citation_tag[scraping_language])
-                        PagesList = CitationButtom.text
-                        PagesSplit = PagesList.split()
-                        NumberPages = math.ceil(int(PagesSplit[-1]) / 10)
 
-                        CitationButtom.click()
-                    except Exception as e:
+#-------------------------------------------------
+#Main Code
+Index = 0
+#Here is is checking if the CSV file exists or not, if not it creates AI2Peat_List.csv and AI2Peat_Relationship.csv
 
-                        driver.close()  # Close the webpage window
-                        continue
-                        # time.sleep(5)
-                    time.sleep(30)
-                    # ------------------------------------------------------------------------
-                    # Here it will start the scrapping and write the data into both CSV files created.
-                    for PageNext in range(NumberPages):
-                        Titles = driver.find_elements(By.XPATH, TitleXPath)
+# the csv file doesnt exist => start scraping from FirstSearch
+# paper_title = FirstSearch
+# else :
+# the csv file exists -> sample a paper title from the csv file
+# this below is a function that returns a paper title:
+# open csv file (with pandas)
+# sample a paper title (with pandas)
+# paper_title = random_paper_title()
+# outside the if else statement
+# scraping_function(paper_title)
 
-                        with open(network_node_filename, 'a') as ListFile, open(network_edge_filename,
-                                                                                'a') as RelationshipFile:
-
-                            for i in range(len(Titles)):
-                                Index += 1
-                                ListFile.write(
-                                    str(Index) + ';' + Titles[i].get_attribute('id') + ';' + Titles[i].text + ';' +
-                                    Titles[i].get_attribute('href') + '\n')
-
-                                RelationshipFile.write(
-                                    str(OriginalIndex) + ';' + str(Index) + '\n')
-                        # -----------------------------------------------------------------
-                        # If there isn't anymore pages to go through, this try/catch clause will finish the loop. It is needed, because even if the paper
-                        # has thousands of citations, the google scholar has a limit of 100 pages.
-                        try:
-                            NextPage = WebDriverWait(driver, 20).until(
-                                EC.element_to_be_clickable(
-                                    (By.XPATH,
-                                     NextButtonXPath))
-                            )
-                            NextPage.click()
-                        except Exception as e:
-
-                            driver.close()  # Close the webpage window
-                            continue  # Continue the loop
-
+# write code to initialise the nodes and edges filenames
 if not os.path.exists(network_node_folder + network_node_filename):
-    # write code to initialise the nodes and edges filenames
-
-
 
     init_files()
- #---------------------------------------------------------------------
-# In this part, the program will acess the Google Scholar site.
 
 
-    driver_init()
+#Here it will check if the CSV file is empty, if it is, the program will search for "Playing Atari..."
+df = pd.read_csv(network_node_folder + network_node_filename, sep=';')
+if len(df) == 0:
+    # ---------------------------------------------------------------------
+    # In this part, the program will acess the Google Scholar site.
+
     driver = driver_init()
-#--------------------------------------------------------------------
-#Here it will acess the Search Bar and search for the first paper
+    # --------------------------------------------------------------------
+    # Here it will acess the Search Bar and search for the first paper
 
-
-
-    search_init()
-    time.sleep(30)
-#-------------------------------------------------------------------
-# Now it will find the name of the first paper by the XPath and then write it on the CSV file and then click on the paper.
-    Index = 0
+    search_init(driver)
+    time.sleep(10)
+    # -------------------------------------------------------------------
+    # Now it will find the name of the first paper by the XPath and then write it on the CSV file and then click on the paper.
+    # Index = 0
     OriginalTitle = driver.find_element(By.XPATH, TitleXPath)
+    OriginalAuthors = driver.find_elements(By.XPATH, AuthorXPath)
     OriginalName = OriginalTitle.text
 
- #-----------------------------------------------------------------
-# Here we are opening the CSV file and writing the data from the first paper
-    with open(network_node_filename, 'a') as File:
-        File.write(str(Index) + ';' + OriginalTitle.get_attribute('id') + ';' + OriginalTitle.text + ';' + OriginalTitle.get_attribute('href') + '\n')
-    OriginalIndex = Index
+    # -----------------------------------------------------------------
+    # Here we are opening the CSV file and writing the data from the first paper
+    add_node(network_node_folder + network_node_filename,
+              OriginalTitle.get_attribute('id'),
+             OriginalTitle.text, OriginalTitle.get_attribute('href'),OriginalAuthors[0].text, paper_scraped_already='Yes')
 
+    # --------------------------------------------------------------------
+    # Here it will find the Citations link. It extracts the number of papers from the link, then divides by 10, so we can now how many pages the
+    # program will need to through to get all the pages. After that it clicks on the link.
 
-
+    scrapping(driver)
 # --------------------------------------------------------------------
-# Here it will find the Citations link. It extracts the number of papers from the link, then divides by 10, so we can now how many pages the
-#program will need to through to get all the pages. After that it clicks on the link.
-
-    scrapping()
-#--------------------------------------------------------------------
-#This will start only if the CSV file, named AI2Peat_List has already been created.
+# If the CSV is not empty, then the program will sample one of the other papers in the CSV and start searching for it
 else:
-    # Read the CSV file to get the Paper_Name for Paper_ID = 1
-    df = pd.read_csv(network_node_filename, delimiter=';')
+    papers_df = pd.read_csv(network_node_folder + network_node_filename, sep=';')
+
+    driver = driver_init()
 
 
+    scrapping2(driver)
 
-scrapping2()
